@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -9,6 +9,7 @@ using Tor.Controller;
 using Tor.Helpers;
 using Tor.IO;
 using System.Threading;
+using Microsoft.Extensions.Logging;
 
 namespace Tor
 {
@@ -22,6 +23,7 @@ namespace Tor
         private readonly ClientCreateParams createParams;
         private readonly ClientRemoteParams remoteParams;
         private readonly object synchronize;
+        private readonly ILogger logger;
 
         private Configuration configuration;
         private Control controller;
@@ -36,13 +38,14 @@ namespace Tor
         /// Initializes a new instance of the <see cref="Client"/> class.
         /// </summary>
         /// <param name="createParams">The parameters used when creating the client.</param>
-        private Client(ClientCreateParams createParams)
+        private Client(ClientCreateParams createParams, ILogger logger = null)
         {
             this.createParams = createParams;
             this.disposed = false;
             this.process = null;
             this.remoteParams = null;
             this.synchronize = new object();
+            this.logger = logger;
 
             this.Start();
         }
@@ -50,14 +53,15 @@ namespace Tor
         /// <summary>
         /// Initializes a new instance of the <see cref="Client"/> class.
         /// </summary>
-        /// <param name="remoateParams">The parameters used when connecting to the client.</param>
-        private Client(ClientRemoteParams remoteParams)
+        /// <param name="remoteParams">The parameters used when connecting to the client.</param>
+        private Client(ClientRemoteParams remoteParams, ILogger logger = null)
         {
             this.createParams = null;
             this.disposed = false;
             this.process = null;
             this.remoteParams = remoteParams;
             this.synchronize = new object();
+            this.logger = logger;
 
             this.Start();
         }
@@ -203,23 +207,45 @@ namespace Tor
         /// <returns>A <see cref="Client"/> object instance.</returns>
         public static Client Create(ClientCreateParams createParams)
         {
+            return Create(createParams, null);
+        }
+
+        /// <summary>
+        /// Creates a new <see cref="Client"/> object instance and attempts to launch the tor application executable.
+        /// </summary>
+        /// <param name="createParams">The parameters used when creating the client.</param>
+        /// <param name="logger">The logger to receive tor events and lifecycle messages.</param>
+        /// <returns>A <see cref="Client"/> object instance.</returns>
+        public static Client Create(ClientCreateParams createParams, ILogger logger)
+        {
             if (createParams == null)
                 throw new ArgumentNullException("createParams");
 
-            return new Client(createParams);
+            return new Client(createParams, logger);
         }
 
         /// <summary>
         /// Creates a new <see cref="Client"/> object instance configured to connect to a remotely hosted tor application executable.
         /// </summary>
-        /// <param name="remoateParams">The parameters used when connecting to the client.</param>
+        /// <param name="remoteParams">The parameters used when connecting to the client.</param>
         /// <returns>A <see cref="Client"/> object instance.</returns>
         public static Client CreateForRemote(ClientRemoteParams remoteParams)
+        {
+            return CreateForRemote(remoteParams, null);
+        }
+
+        /// <summary>
+        /// Creates a new <see cref="Client"/> object instance configured to connect to a remotely hosted tor application executable.
+        /// </summary>
+        /// <param name="remoteParams">The parameters used when connecting to the client.</param>
+        /// <param name="logger">The logger to receive tor events and lifecycle messages.</param>
+        /// <returns>A <see cref="Client"/> object instance.</returns>
+        public static Client CreateForRemote(ClientRemoteParams remoteParams, ILogger logger)
         {
             if (remoteParams == null)
                 throw new ArgumentNullException("remoteParams");
 
-            return new Client(remoteParams);
+            return new Client(remoteParams, logger);
         }
 
         /// <summary>
@@ -309,6 +335,8 @@ namespace Tor
             else
                 remoteParams.ValidateParameters();
 
+            logger?.LogInformation("Tor client process starting...");
+
             if (createParams != null)
             {
                 lock (synchronize)
@@ -342,6 +370,7 @@ namespace Tor
                     }
                     catch (Exception exception)
                     {
+                        logger?.LogError(exception, "The tor application process failed to launch");
                         throw new TorException("The tor application process failed to launch", exception);
                     }
                 }
@@ -351,13 +380,23 @@ namespace Tor
 
             lock (synchronize)
             {
+                events = new Events.Events(this);
                 configuration = new Configuration(this);
                 controller = new Control(this);
                 logging = new Logging.Logging(this);
+
+                if (logger != null)
+                {
+                    logging.DebugReceived += (s, e) => logger.LogDebug("Tor: {Message}", e.Message);
+                    logging.ErrorReceived += (s, e) => logger.LogError("Tor: {Message}", e.Message);
+                    logging.InfoReceived += (s, e) => logger.LogInformation("Tor: {Message}", e.Message);
+                    logging.NoticeReceived += (s, e) => logger.LogInformation("Tor Notice: {Message}", e.Message);
+                    logging.WarnReceived += (s, e) => logger.LogWarning("Tor: {Message}", e.Message);
+                }
+
                 proxy = new Proxy.Proxy(this);
                 status = new Status.Status(this);
 
-                events = new Events.Events(this);
                 events.Start((Action)delegate
                 {
                     configuration.Start();
@@ -377,6 +416,8 @@ namespace Tor
             if (disposed && !exited)
                 return;
 
+            logger?.LogInformation("Tor client process stopping...");
+
             lock (synchronize)
             {
                 if (!IsRemote && process != null)
@@ -388,14 +429,32 @@ namespace Tor
                     }
                     else
                     {
-                        SignalHaltCommand command = new SignalHaltCommand();
-                        Response response = command.Dispatch(this);
+                        bool haltSignaled = false;
+                        try
+                        {
+                            SignalHaltCommand command = new SignalHaltCommand();
+                            Response response = command.Dispatch(this);
+                            if (response.Success)
+                                haltSignaled = true;
+                        }
+                        catch
+                        {
+                            // Swallow error if Tor control connection is not authenticated/available
+                        }
 
-                        if (response.Success)
+                        if (haltSignaled)
                             return;
 
-                        process.Kill();
-                        process.Dispose();
+                        try
+                        {
+                            if (process != null)
+                            {
+                                if (!process.HasExited)
+                                    process.Kill();
+                                process.Dispose();
+                            }
+                        }
+                        catch { }
                         process = null;
                     }
                 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -95,9 +95,9 @@ namespace Tor.Config
         /// Gets or sets a value indicating whether Tor prefers an OR port with an IPv6 address over an IPv4 address if
         /// a given entry node has both.
         /// </summary>
-        public bool ClientPreferIPv6ORPort
+        public Auto ClientPreferIPv6ORPort
         {
-            get { return (bool)GetValue(ConfigurationNames.ClientPreferIPv6ORPort); }
+            get { return (Auto)GetValue(ConfigurationNames.ClientPreferIPv6ORPort); }
             set { SetValue(ConfigurationNames.ClientPreferIPv6ORPort, value); }
         }
 
@@ -244,6 +244,15 @@ namespace Tor.Config
         {
             get { return (HostAuth)GetValue(ConfigurationNames.HTTPProxyAuthenticator); }
             set { SetValue(ConfigurationNames.HTTPProxyAuthenticator, value); }
+        }
+
+        /// <summary>
+        /// Gets or sets the path to the Tor process data directory.
+        /// </summary>
+        public string DataDirectory
+        {
+            get { return (string)GetValue(ConfigurationNames.DataDirectory); }
+            set { SetValue(ConfigurationNames.DataDirectory, value); }
         }
 
         /// <summary>

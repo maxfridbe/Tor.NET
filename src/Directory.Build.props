@@ -1,0 +1,16 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    
+    <!-- Centralized Assembly Metadata -->
+    <Version>1.0.1.0</Version>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
+    <Description>A managed library for interaction with the Tor network</Description>
+    <Copyright>Copyright © Chris Copeland 2016</Copyright>
+    <Product>Tor.NET</Product>
+    <Company>Chris Copeland</Company>
+  </PropertyGroup>
+</Project>

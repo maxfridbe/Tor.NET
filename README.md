@@ -1,107 +1,218 @@
 # Tor.NET
 A managed library to use the Tor network for SOCKS5 communications. All credits go to Chris Copeland. Originally posted on [CodeProject](http://www.codeproject.com/Articles/1072864/Tor-NET-A-managed-Tor-network-library).
 
-# What is Tor?
-Tor is a sophisticated security system that enables users from across the world to access content over the internet securely and privately. Tor uses a system of relays to transmit information without any single router having full knowledge of the client, the request or the destination server. It uses multiple layers of encryption.
+> [!NOTE]
+> This library has been ported to **.NET 10 on Linux**, updated to support Microsoft Dependency Injection (`IServiceCollection`) and Logging (`ILogger`), and all legacy Windows-only binaries and controls have been cleaned out.
 
-# Installation and usage
+# What Tor.NET Provides
 
-1. Navigate to the [Tor download page](https://www.torproject.org/download/download.html.en).
-2. Expand the "Microsoft Windows" option.
-3. Download the "Expert Bundle"
-4. Install the expert bundle to a known location. These files are all that are necessary to begin using the Tor network with this library.
-5. Windows Vista, 7, 8, and 10 may require additional privileges to launch a new process. If this is the case, ensure that the [application manifest file specifies that the process will require elevated privileges](https://msdn.microsoft.com/en-us/library/bb756929.aspx)
+### 1. Programmatic Tor Process Lifecycle Control
+Tor.NET can automatically launch, monitor, and clean up local native `tor` daemon processes from C# on both Linux and Windows, or connect to a remote instance.
+
+* **Guaranteed Process Cleanup (`TAKEOWNERSHIP`)**: If the parent C# application crashes or is forcefully terminated (e.g. `kill -9`), the operating system automatically closes the control connection. The Tor daemon detects this and immediately shuts down, preventing orphaned processes, port conflicts, and directory locks.
+
+```csharp
+// Configure and launch local Tor process
+string torPath = "/usr/bin/tor"; // On Windows: @"C:\Tools\tor\tor.exe"
+ClientCreateParams createParams = new ClientCreateParams(torPath, 9151); // Control Port
+createParams.SetConfig(ConfigurationNames.SocksPort, 9150);              // SOCKS Port
+
+using (Client client = Client.Create(createParams))
+{
+    // Process is started and running here
+    Console.WriteLine($"Tor is running: {client.IsRunning}");
+} // Automatically disposes, kills the daemon process, and cleans up resources
+```
+
+### 2. Tor Control Port Protocol Integration
+It wraps the Tor Control Port protocol, enabling you to rotate identity, control circuits, and subscribe to real-time events.
+
+* **Force IP Rotation (New Identity)**:
+```csharp
+// Force Tor to build new circuits and rotate your exit IP address
+client.Controller.CleanCircuits();
+```
+
+* **Inspect and Close Circuits / Streams**:
+```csharp
+// List all active routing circuits
+foreach (Circuit circuit in client.Status.Circuits)
+{
+    Console.WriteLine($"Circuit ID: {circuit.ID}, Status: {circuit.Status}");
+}
+
+// Close an active circuit
+client.Controller.CloseCircuit(someCircuit);
+```
+
+* **Subscribe to Real-Time Network Events**:
+```csharp
+// Monitor download and upload speeds in real-time
+client.Status.BandwidthChanged += (sender, e) =>
+{
+    Console.WriteLine($"Download: {e.DownloadRate}/s, Upload: {e.UploadRate}/s");
+};
+
+// Monitor circuit state changes (e.g., when a circuit is built or closed)
+client.Status.CircuitsChanged += (sender, e) =>
+{
+    Console.WriteLine("Routing circuits updated.");
+};
+```
+
+### 3. Traffic Routing (SOCKS5 & TCP Streams)
+You can route HTTP/HTTPS web requests or establish raw TCP socket streams over the Tor network.
+
+* **Routing HttpClient Web Requests**:
+```csharp
+using System.Net;
+using System.Net.Http;
+
+var handler = new HttpClientHandler
+{
+    Proxy = new WebProxy("socks5://127.0.0.1:9150")
+};
+
+using (var httpClient = new HttpClient(handler))
+{
+    var myIp = await httpClient.GetStringAsync("https://icanhazip.com");
+    Console.WriteLine($"Public IP routed through Tor: {myIp.Trim()}");
+}
+```
+
+* **Routing Raw TCP socket streams**:
+```csharp
+// Establish a raw TCP stream through Tor to a target host and port
+using (Stream stream = client.GetStream("example.com", 80))
+{
+    byte[] request = Encoding.ASCII.GetBytes("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
+    await stream.WriteAsync(request, 0, request.Length);
+    
+    byte[] response = new byte[1024];
+    int read = await stream.ReadAsync(response, 0, response.Length);
+    Console.WriteLine(Encoding.ASCII.GetString(response, 0, read));
+}
+```
+
+### 4. Modern .NET Ecosystem Integration
+Includes native integration with Microsoft dependency injection container (`IServiceCollection`) and logger abstraction (`ILogger`).
+
+```csharp
+var services = new ServiceCollection();
+
+// Pipes all internal Tor daemon logs directly to ILogger
+services.AddLogging(configure => configure.AddConsole());
+
+var createParams = new ClientCreateParams("/usr/bin/tor", 9151);
+createParams.SetConfig(ConfigurationNames.SocksPort, 9150);
+
+// Register the Tor Client
+services.AddTorClient(createParams);
+
+var serviceProvider = services.BuildServiceProvider();
+
+// Resolve and start the client
+var client = serviceProvider.GetRequiredService<Client>();
+```
+
+# Installation and Usage (Linux)
+
+1. Install the native Tor package and GeoIP databases on your Linux system:
+   ```bash
+   sudo apt-get update && sudo apt-get install -y tor
+   ```
+2. Make sure Tor is not running as a system daemon (so it does not bind to your local ports 9050/9051):
+   ```bash
+   # Linux systems without systemd can keep it disabled.
+   # If systemd is present:
+   sudo systemctl stop tor
+   sudo systemctl disable tor
+   ```
+3. Add the project reference to your application.
 
 # Code Samples
 
-## Launching a new Tor process
+## 1. Setup Dependency Injection (IOC) & Logging
 
-	ClientCreateParams createParams = new ClientCreateParams();
-	createParams.ConfigurationFile = "/path/to/config/file";
-	createParams.DefaultConfigurationFile = "/path/to/default/config/file";
-	createParams.ControlPassword = ""; // Tor does not use a control password by default, so this can be null or blank
-	createParams.ControlPort = 9051;
-	createParams.Path = "/path/to/tor/exe";
+You can register the Tor Client using `AddTorClient` in your `ServiceCollection`:
 
-	Client client = Client.Create(createParams);
-	
-## Using the HTTP Proxy
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Tor;
+using Tor.Config;
 
-	client.Proxy.Port = 9989;
+var services = new ServiceCollection();
 
-	HttpWebRequest request = (HttpWebRequest)HttpWebRequest.Create("http://domain.com");
+// Setup Logging
+services.AddLogging(configure =>
+{
+    configure.AddConsole();
+    configure.SetMinimumLevel(LogLevel.Debug);
+});
 
-	if (client.Proxy.IsRunning)
-		request.Proxy = client.Proxy.WebProxy;
+// Configure Tor Parameters
+var createParams = new ClientCreateParams("/usr/bin/tor", 9151); // Control Port
+createParams.SetConfig(ConfigurationNames.SocksPort, 9150);      // SOCKS Port
 
-	using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-	{
-		if (response.StatusCode == StatusCode.OK)
-			; // success
-	}
-	
-## Using the SOCKS5 Proxy
+services.AddTorClient(createParams);
 
-	using (Stream stream = client.GetStream("12.34.56.789", 1234))
-	{
-		stream.Write(..);
-		stream.Read(..);
-	}
-	
-# API
+var serviceProvider = services.BuildServiceProvider();
 
-The Client class contains a Controller property which provides some methods for controlling elements of the service. The methods available in the class are designed to automate the connection to the control port, and the dispatch of commands. These methods also perform validation on the parameters provided.
+// Resolve the client (this automatically starts the Tor process and routes logs to ILogger)
+var client = serviceProvider.GetRequiredService<Client>();
+```
 
-In additional to being able to control the process, the client operates event monitoring in the background to synchronize circuit, OR connection, and stream information. This works by opening a constant connection to the control port and dispatching a "setevents" command. This informs the Tor process to report events which occur in the system, such as when a circuit is built or closed, or when connections or streams change.
+## 2. Using SOCKS5 Proxy natively in HttpClient (.NET 6+)
 
-In order to benefit from real-time updates, event handlers can be registered against events in the  Status property of the Client class. The events which can be monitored are as follows:
+Modern .NET HttpClient natively supports SOCKS5 proxy schemes:
 
-### client.Controller.CleanCircuits()
+```csharp
+using System.Net;
+using System.Net.Http;
 
-This informs the service that new requests should be routed through new circuits. This prevents new requests from re-using older circuits which have been used before. This also performs a clear of the client-side DNS cache.
+var handler = new HttpClientHandler
+{
+    Proxy = new WebProxy("socks5://127.0.0.1:9150")
+};
 
-### client.Controller.CleanDNSCache()
+using (var httpClient = new HttpClient(handler))
+{
+    var ipInfo = await httpClient.GetStringAsync("https://icanhazip.com");
+    Console.WriteLine($"Your Tor IP: {ipInfo.Trim()}");
+}
+```
 
-This causes the service to clear the client-side DNS cache for hostnames.
+## 3. Using legacy SOCKS5 Stream
 
-### client.Controller.CloseCircuit(Circuit)
+```csharp
+using (Stream stream = client.GetStream("12.34.56.789", 1234))
+{
+    stream.Write(...);
+    stream.Read(...);
+}
+```
 
-This closes a circuit if it has not yet been closed, and has not failed. A closed circuit can no longer be used by Tor to generate OR connections or communicate streams.
+# Projects in the Repository
 
-### client.Controller.CloseStream(Stream, StreamReason)
+The codebase is split into the following subdirectories:
 
-This closes a stream if it has not yet been closed, and has not failed. This is the equivelant of terminating a socket connection.
+1. **[Tor](file:///var/home/maxfridbe/Dev/vibecoding/Tor.NET/src/Tor)**: The core Tor.NET library (SDK-style targeting `net10.0`).
+2. **[Tor.Tests](file:///var/home/maxfridbe/Dev/vibecoding/Tor.NET/src/Tor.Tests)**: Unit test project using xUnit (targeting `net10.0`).
+3. **[Tor.TestHarness](file:///var/home/maxfridbe/Dev/vibecoding/Tor.NET/src/Tor.TestHarness)**: A console test harness showing Dependency Injection, Logging, and fetching Google image search results through the Tor network.
 
-### client.Controller.CreateCircuit()
+---
 
-This informs the service that a new circuit should be built, and that the service should be responsible for choosing which routers to use.
+### Running Unit Tests
 
-### client.Controller.CreateCircuit(string[])
+Run the xUnit tests with:
+```bash
+dotnet test src/Tor.Tests/Tor.Tests.csproj
+```
 
-This functions the same as the  CreateCircuit() method, however the method accepts an array containing nicknames or fingerprints of routers which it should use when building the circuit.
+### Running the Test Harness
 
-### client.Controller.ExtendCircuit(Circuit, string[])
-
-This functions near the same as the the CreateCircuit(string[]) method, except that the routers specified in the argument list will be appended onto the end of an existing circuit.
-
-### client.Status.BandwidthChanged (event)
-
-This is raised whenever the download and update rates, estimated for within the last second, have changed within the Tor service. When requests are being dispatched across a connection these values reflect the number of bytes downloaded and uploaded, on average, since the last event.
-
-### client.Status.CircuitsChanged (event)
-
-This is raised whenever circuits have been altered in the Tor service. When the event is raised, this signals that the  Circuits property contains new information.
-
-### client.Status.ORConnectionsChanged (event)
-
-This is raised whenever OR connections have been altered in the Tor service. When the event is raised, this signals that the  ORConnections property contains new information.
-
-### client.Status.StreamsChanged (event)
-
-This is raised whenever streams have been altered in the Tor service. When the event is raised, this signals that the  Streams property contains new information.
-
-The Status property also provides basic properties and methods for retrieving the current status of the service. For instance, the  GetAllRouters() method is an expensive function which downloads a complete register of all routers which the Tor process cares to know about.
-
-The properties all perform requests to the control port, so execution may not be instantaneous. If the Tor client cannot connect to the control port of the Tor process, then these values may not be representative of the actual values in the process.
-
-There are events which have not been implemented which could easily be integrated into the library. For instance, the "ADDRMAP" event is raised when an address has been resolved.
+Run the test harness application with:
+```bash
+dotnet run --project src/Tor.TestHarness/Tor.TestHarness.csproj
+```

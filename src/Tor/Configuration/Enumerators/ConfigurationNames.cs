@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -28,7 +28,7 @@ namespace Tor.Config
         [ConfigurationAssoc("CircuitIdleTimeout", Default = 3600, Type = typeof(int), Validation = ConfigurationValidation.Positive)]
         CircuitIdleTimeout,
 
-        [ConfigurationAssoc("ClientPreferIPv6ORPort", Default = false, Type = typeof(bool))]
+        [ConfigurationAssoc("ClientPreferIPv6ORPort", Default = Auto.Auto, Type = typeof(Auto))]
         ClientPreferIPv6ORPort,
 
         [ConfigurationAssoc("ClientUseIPv6", Default = false, Type = typeof(bool))]
@@ -110,6 +110,9 @@ namespace Tor.Config
         SocksTimeout,
 
         [ConfigurationAssoc("UseMicrodescriptors", Default = Auto.Auto, Type = typeof(Auto))]
-        UseMicroDescriptors
+        UseMicroDescriptors,
+
+        [ConfigurationAssoc("DataDirectory", Default = null, Type = typeof(string))]
+        DataDirectory
     }
 }

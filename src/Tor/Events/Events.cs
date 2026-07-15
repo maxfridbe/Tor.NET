@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -333,6 +333,55 @@ namespace Tor.Events
 
                 if (response.Length < 3 || !response.Substring(0, 3).Equals("250"))
                     throw new TorException("The events manager failed to authenticate with the control connection");
+
+                if (!client.IsRemote)
+                {
+                    byte[] takeOwnershipBuffer = Encoding.ASCII.GetBytes("takeownership\r\n");
+                    socket.BeginSend(takeOwnershipBuffer, 0, takeOwnershipBuffer.Length, SocketFlags.None, OnSocketSendTakeOwnership, null);
+                }
+                else
+                {
+                    if (connectCallback != null)
+                        connectCallback();
+                    
+                    SetEvents();
+                    socket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, OnSocketReceive, null);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Called when the socket has completed sending the takeownership command.
+        /// </summary>
+        /// <param name="ar">The asynchronous result object for the asynchronous method.</param>
+        private void OnSocketSendTakeOwnership(IAsyncResult ar)
+        {
+            try
+            {
+                socket.EndSend(ar);
+                socket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, OnSocketReceiveTakeOwnership, null);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Called when the socket receives a response to the takeownership command.
+        /// </summary>
+        /// <param name="ar">The asynchronous result object for the asynchronous method.</param>
+        private void OnSocketReceiveTakeOwnership(IAsyncResult ar)
+        {
+            try
+            {
+                int received = socket.EndReceive(ar);
+
+                if (received <= 0)
+                    return;
+
+                string response = Encoding.ASCII.GetString(buffer, 0, received);
+
+                if (response.Length < 3 || !response.Substring(0, 3).Equals("250"))
+                    throw new TorException("The events manager failed to take ownership of the Tor process");
 
                 if (connectCallback != null)
                     connectCallback();

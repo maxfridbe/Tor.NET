@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -191,9 +191,6 @@ namespace Tor
             builder.Append("--ignore-missing-torrc ");
             builder.Append("--allow-missing-torrc ");
             builder.AppendFormat("--ControlPort {0}", controlPort);
-
-            /** TEMPORARY: DELETE LATER **/
-            builder.AppendFormat(" --SocksPort 9050");
 
             if (!string.IsNullOrWhiteSpace(configurationFile))
                 builder.AppendFormat(" -f \"{0}\"", configurationFile);
